@@ -9,7 +9,7 @@
     "test": "node --test test/index.test.js"
   },
   "dependencies": {
-    "@actions/core": "^3.0.0",
+    "@actions/core": "^3.0.1",
     "@actions/github": "^9.1.0"
   },
   "devDependencies": {
