@@ -5,6 +5,10 @@ import {
   buildBlueprint,
   buildPreviewUrl,
   buildCommentBody,
+  buildDescriptionBlock,
+  computeNextDescriptionBody,
+  removeDescriptionBlock,
+  descriptionBlockPattern,
   parseJsonInput,
   parseOptionalBoolean,
 } from '../lib.js';
@@ -224,4 +228,136 @@ test('buildCommentBody contains marker, URL, and image', () => {
   assert.ok(body.includes(`<!-- ${marker} -->`), 'contains hidden marker');
   assert.ok(body.includes(previewUrl), 'contains preview URL');
   assert.ok(body.includes(imageUrl), 'contains image URL');
+});
+
+test('buildCommentBody appends extra-text when provided', () => {
+  const body = buildCommentBody(
+    'facturascripts-playground-preview',
+    'https://example.com/?blueprint-data=abc',
+    'https://example.com/logo.png',
+    'Test the **invoicing** flow.'
+  );
+  assert.ok(body.endsWith('Test the **invoicing** flow.'), 'extra-text is appended verbatim');
+});
+
+test('buildCommentBody ignores empty extra-text', () => {
+  const body = buildCommentBody(
+    'facturascripts-playground-preview',
+    'https://example.com/?blueprint-data=abc',
+    'https://example.com/logo.png',
+    '   '
+  );
+  assert.ok(body.endsWith('This preview was generated automatically from the PR branch ZIP.'));
+});
+
+test('buildDescriptionBlock wraps content with :start and :end markers', () => {
+  const marker = 'facturascripts-playground-preview';
+  const block = buildDescriptionBlock(
+    marker,
+    'https://example.com/?blueprint-data=abc',
+    'https://example.com/logo.png'
+  );
+  assert.ok(block.startsWith(`<!-- ${marker}:start -->`), 'starts with :start marker');
+  assert.ok(block.endsWith(`<!-- ${marker}:end -->`), 'ends with :end marker');
+  assert.ok(block.includes('FacturaScripts Playground Preview'), 'contains title');
+});
+
+test('descriptionBlockPattern matches the managed block including trailing whitespace', () => {
+  const marker = 'facturascripts-playground-preview';
+  const block = buildDescriptionBlock(
+    marker,
+    'https://example.com/?blueprint-data=abc',
+    'https://example.com/logo.png'
+  );
+  const wrapped = `Hello\n\n${block}\n\nGoodbye`;
+  const pattern = descriptionBlockPattern(marker);
+  const match = wrapped.match(pattern);
+  assert.ok(match, 'pattern matched the block');
+  assert.ok(match[0].includes(':end -->'), 'capture spans end marker');
+});
+
+test('computeNextDescriptionBody appends the block when markers are missing', () => {
+  const block = buildDescriptionBlock(
+    'facturascripts-playground-preview',
+    'https://example.com/?blueprint-data=abc',
+    'https://example.com/logo.png'
+  );
+  const result = computeNextDescriptionBody(
+    'PR body here.',
+    'facturascripts-playground-preview',
+    block
+  );
+  assert.ok(result.startsWith('PR body here.'), 'preserves original body');
+  assert.ok(result.endsWith('<!-- facturascripts-playground-preview:end -->'));
+});
+
+test('computeNextDescriptionBody replaces an existing managed block', () => {
+  const marker = 'facturascripts-playground-preview';
+  const oldBlock = buildDescriptionBlock(
+    marker,
+    'https://example.com/?blueprint-data=OLD',
+    'https://example.com/logo.png'
+  );
+  const newBlock = buildDescriptionBlock(
+    marker,
+    'https://example.com/?blueprint-data=NEW',
+    'https://example.com/logo.png'
+  );
+  const next = computeNextDescriptionBody(
+    `Top text\n\n${oldBlock}\n\nBottom text`,
+    marker,
+    newBlock
+  );
+  assert.ok(next.includes('blueprint-data=NEW'), 'updated to new payload');
+  assert.ok(!next.includes('blueprint-data=OLD'), 'removed old payload');
+  assert.ok(next.startsWith('Top text'), 'preserved leading text');
+  assert.ok(next.endsWith('Bottom text'), 'preserved trailing text');
+});
+
+test('computeNextDescriptionBody returns null when user replaced the block with placeholder text', () => {
+  const marker = 'facturascripts-playground-preview';
+  const userBody = `<!-- ${marker}:start -->\nI removed the button on purpose.\n<!-- ${marker}:end -->`;
+  const block = buildDescriptionBlock(
+    marker,
+    'https://example.com/?blueprint-data=abc',
+    'https://example.com/logo.png'
+  );
+  assert.equal(computeNextDescriptionBody(userBody, marker, block), null);
+});
+
+test('computeNextDescriptionBody returns null when markers absent and restore disabled', () => {
+  const marker = 'facturascripts-playground-preview';
+  const block = buildDescriptionBlock(
+    marker,
+    'https://example.com/?blueprint-data=abc',
+    'https://example.com/logo.png'
+  );
+  assert.equal(
+    computeNextDescriptionBody('Plain PR body', marker, block, {
+      restoreIfRemoved: false,
+    }),
+    null
+  );
+});
+
+test('removeDescriptionBlock strips the managed block but leaves rest intact', () => {
+  const marker = 'facturascripts-playground-preview';
+  const block = buildDescriptionBlock(
+    marker,
+    'https://example.com/?blueprint-data=abc',
+    'https://example.com/logo.png'
+  );
+  const body = `Intro\n\n${block}\n\nOutro`;
+  const stripped = removeDescriptionBlock(body, marker);
+  assert.ok(!stripped.includes(':start -->'), 'start marker removed');
+  assert.ok(!stripped.includes(':end -->'), 'end marker removed');
+  assert.ok(stripped.includes('Intro'), 'intro preserved');
+  assert.ok(stripped.includes('Outro'), 'outro preserved');
+});
+
+test('removeDescriptionBlock is a no-op when markers are absent', () => {
+  assert.equal(
+    removeDescriptionBlock('Just a plain body', 'facturascripts-playground-preview'),
+    'Just a plain body'
+  );
 });
