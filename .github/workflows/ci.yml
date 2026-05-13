@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  verify-dist:
+    name: Verify dist/
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Check that dist/ is committed
+        run: |
+          if [[ -n "$(git status --porcelain dist/)" ]]; then
+            echo "::error::dist/ is out of sync with source. Run 'npm run build' locally and commit the result."
+            git --no-pager diff dist/
+            exit 1
+          fi
