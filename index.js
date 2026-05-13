@@ -4,9 +4,15 @@ import {
   buildBlueprint,
   buildPreviewUrl,
   buildCommentBody,
+  buildDescriptionBlock,
+  computeNextDescriptionBody,
+  removeDescriptionBlock,
   parseJsonInput,
   parseOptionalBoolean,
 } from './lib.js';
+
+const MODE_COMMENT = 'comment';
+const MODE_APPEND = 'append-to-description';
 
 async function run() {
   try {
@@ -25,6 +31,21 @@ async function run() {
       'https://raw.githubusercontent.com/erseco/facturascripts-playground/refs/heads/main/ogimage.png';
     const commentMarker =
       core.getInput('comment-marker') || 'facturascripts-playground-preview';
+    const extraText = (core.getInput('extra-text') || '').trim();
+    const prNumberInput = core.getInput('pr-number');
+    const rawMode = (core.getInput('mode') || MODE_COMMENT).trim().toLowerCase();
+    if (rawMode !== MODE_COMMENT && rawMode !== MODE_APPEND) {
+      core.setFailed(
+        `Invalid mode "${rawMode}". Accepted values: ${MODE_COMMENT}, ${MODE_APPEND}.`
+      );
+      return;
+    }
+    const mode = rawMode;
+    const restoreIfRemoved =
+      parseOptionalBoolean(
+        core.getInput('restore-button-if-removed'),
+        'restore-button-if-removed'
+      ) !== false;
     const extraPlugins =
       parseJsonInput('extra-plugins', core.getInput('extra-plugins'), 'array') ||
       [];
@@ -43,18 +64,35 @@ async function run() {
     const loginUsername = core.getInput('login-username') || undefined;
     const loginPassword = core.getInput('login-password') || undefined;
 
-    // --- Validate PR context ---
+    // --- Resolve PR context ---
     const context = github.context;
-    const prNumber =
-      context.payload.pull_request && context.payload.pull_request.number;
-    if (!prNumber) {
+    const octokit = github.getOctokit(token);
+    let pullRequest = context.payload.pull_request || null;
+    let { owner, repo } = context.repo;
+
+    if (prNumberInput && prNumberInput.trim()) {
+      const prNum = Number.parseInt(prNumberInput.trim(), 10);
+      if (!Number.isInteger(prNum) || prNum <= 0) {
+        core.setFailed(`Invalid pr-number "${prNumberInput}".`);
+        return;
+      }
+      core.info(`Fetching PR #${prNum} details from GitHub API...`);
+      const { data: prData } = await octokit.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: prNum,
+      });
+      pullRequest = prData;
+    }
+
+    if (!pullRequest || !pullRequest.number) {
       core.setFailed(
-        'This action must be triggered from a pull_request event. No pull request context found.'
+        'This action must be triggered from a pull_request event, or pr-number must be provided as input.'
       );
       return;
     }
 
-    const { owner, repo } = context.repo;
+    const prNumber = pullRequest.number;
 
     // --- Build blueprint and preview URL ---
     const blueprint = buildBlueprint(zipUrl, title, author, description, {
@@ -74,14 +112,62 @@ async function run() {
 
     core.info(`Preview URL: ${previewUrl}`);
     core.setOutput('preview-url', previewUrl);
+    core.setOutput('mode', mode);
 
-    // --- Build comment body ---
-    const commentBody = buildCommentBody(commentMarker, previewUrl, imageUrl);
+    if (mode === MODE_APPEND) {
+      const block = buildDescriptionBlock(
+        commentMarker,
+        previewUrl,
+        imageUrl,
+        extraText
+      );
+      core.setOutput('rendered-description', block);
+      core.setOutput('comment-id', '');
 
-    // --- Create or update sticky comment ---
-    const octokit = github.getOctokit(token);
+      const currentBody = pullRequest.body || '';
+      const nextBody = computeNextDescriptionBody(currentBody, commentMarker, block, {
+        restoreIfRemoved,
+      });
 
-    // List existing comments and look for the marker
+      if (nextBody === null) {
+        core.info(
+          'Skipping PR description update (user placeholder detected, or markers removed with restore-button-if-removed=false).'
+        );
+        return;
+      }
+
+      if (nextBody === currentBody) {
+        core.info('PR description already up to date.');
+        return;
+      }
+
+      await octokit.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: prNumber,
+        body: nextBody,
+      });
+      core.info('PR description updated with FacturaScripts Playground preview.');
+      return;
+    }
+
+    // --- Comment mode (default) ---
+    // If the user previously used append-to-description mode, clean the block
+    // out of the PR body so the preview lives in exactly one place.
+    const currentBody = pullRequest.body || '';
+    const cleanedBody = removeDescriptionBlock(currentBody, commentMarker);
+    if (cleanedBody !== currentBody) {
+      await octokit.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: prNumber,
+        body: cleanedBody,
+      });
+      core.info('Removed leftover preview block from PR description.');
+    }
+
+    const commentBody = buildCommentBody(commentMarker, previewUrl, imageUrl, extraText);
+
     let existingCommentId = null;
     for await (const response of octokit.paginate.iterator(
       octokit.rest.issues.listComments,
@@ -104,14 +190,16 @@ async function run() {
         body: commentBody,
       });
       core.info(`Updated existing preview comment (id: ${existingCommentId})`);
+      core.setOutput('comment-id', String(existingCommentId));
     } else {
-      await octokit.rest.issues.createComment({
+      const created = await octokit.rest.issues.createComment({
         owner,
         repo,
         issue_number: prNumber,
         body: commentBody,
       });
-      core.info('Created new preview comment');
+      core.info(`Created new preview comment (id: ${created.data.id})`);
+      core.setOutput('comment-id', String(created.data.id));
     }
   } catch (error) {
     core.setFailed(`Action failed: ${error.message}`);

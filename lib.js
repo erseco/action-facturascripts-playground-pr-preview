@@ -205,16 +205,8 @@ export function buildPreviewUrl(playgroundUrl, blueprintJson) {
   return `${base}?blueprint-data=${encoded}`;
 }
 
-/**
- * Builds the body of the sticky PR comment.
- * @param {string} marker
- * @param {string} previewUrl
- * @param {string} imageUrl
- * @returns {string}
- */
-export function buildCommentBody(marker, previewUrl, imageUrl) {
-  return `<!-- ${marker} -->
-## FacturaScripts Playground Preview
+function buildPreviewBody(previewUrl, imageUrl, extraText) {
+  let body = `## FacturaScripts Playground Preview
 
 <a href="${previewUrl}">
   <img src="${imageUrl}" alt="Open this PR in FacturaScripts Playground" width="220">
@@ -222,4 +214,110 @@ export function buildCommentBody(marker, previewUrl, imageUrl) {
 <small><a href="${previewUrl}">Try this PR in your browser</a></small>
 
 This preview was generated automatically from the PR branch ZIP.`;
+  if (typeof extraText === 'string' && extraText.trim()) {
+    body += `\n\n${extraText.trim()}`;
+  }
+  return body;
+}
+
+/**
+ * Builds the body of the sticky PR comment.
+ * @param {string} marker
+ * @param {string} previewUrl
+ * @param {string} imageUrl
+ * @param {string} [extraText]
+ * @returns {string}
+ */
+export function buildCommentBody(marker, previewUrl, imageUrl, extraText) {
+  return `<!-- ${marker} -->\n${buildPreviewBody(previewUrl, imageUrl, extraText)}`;
+}
+
+/**
+ * Builds the managed block inserted into the PR description in
+ * `append-to-description` mode. The block is wrapped with `:start` and `:end`
+ * marker comments so the action can find and update it on subsequent runs.
+ * @param {string} marker
+ * @param {string} previewUrl
+ * @param {string} imageUrl
+ * @param {string} [extraText]
+ * @returns {string}
+ */
+export function buildDescriptionBlock(marker, previewUrl, imageUrl, extraText) {
+  return `<!-- ${marker}:start -->\n${buildPreviewBody(previewUrl, imageUrl, extraText)}\n<!-- ${marker}:end -->`;
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Returns the regex that matches the managed description block (including a
+ * trailing run of whitespace) for the given marker.
+ * @param {string} marker
+ * @returns {RegExp}
+ */
+export function descriptionBlockPattern(marker) {
+  const escaped = escapeRegex(marker);
+  return new RegExp(
+    `<!-- ${escaped}:start -->([\\s\\S]*?)<!-- ${escaped}:end -->\\s*`,
+    'm'
+  );
+}
+
+/**
+ * Computes the next PR body after applying (or skipping) the managed
+ * description block. Returns `null` when the action should leave the body
+ * untouched: either a user replaced the block content with their own placeholder
+ * text, or the markers are missing and `restoreIfRemoved` is `false`.
+ * @param {string} currentBody
+ * @param {string} marker
+ * @param {string} block
+ * @param {object} [options]
+ * @param {boolean} [options.restoreIfRemoved=true]
+ * @returns {string | null}
+ */
+export function computeNextDescriptionBody(
+  currentBody,
+  marker,
+  block,
+  options = {}
+) {
+  const { restoreIfRemoved = true } = options;
+  const body = currentBody || '';
+  const pattern = descriptionBlockPattern(marker);
+  const match = body.match(pattern);
+
+  if (match) {
+    const existingContent = (match[1] || '').trim();
+    const looksLikeButton =
+      existingContent.includes('<a ') &&
+      existingContent.toLowerCase().includes('playground');
+    if (existingContent && !looksLikeButton) {
+      return null;
+    }
+    return body.replace(pattern, block);
+  }
+
+  if (!restoreIfRemoved) {
+    return null;
+  }
+
+  const trimmed = body.trimEnd();
+  return trimmed ? `${trimmed}\n\n${block}` : block;
+}
+
+/**
+ * Removes the managed description block from a PR body, if present. Returns
+ * the original body when no markers are found.
+ * @param {string} currentBody
+ * @param {string} marker
+ * @returns {string}
+ */
+export function removeDescriptionBlock(currentBody, marker) {
+  const body = currentBody || '';
+  const pattern = descriptionBlockPattern(marker);
+  if (!pattern.test(body)) {
+    return body;
+  }
+  return body.replace(pattern, '').trimEnd();
 }

@@ -65,12 +65,16 @@ A GitHub Action that automatically posts or updates a sticky pull request commen
 |---|---|---|---|
 | `github-token` | ✅ | — | GitHub token with `pull-requests: write` permission |
 | `zip-url` | ✅ | — | URL of the plugin/extension ZIP file to load in the playground |
+| `mode` | ❌ | `comment` | How to publish the preview: `comment` (sticky PR comment) or `append-to-description` (managed block inside the PR body) |
 | `title` | ❌ | `PR Preview` | Blueprint meta title |
 | `description` | ❌ | `Preview this PR in FacturaScripts Playground` | Blueprint meta description |
 | `author` | ❌ | `erseco` | Blueprint meta author |
 | `playground-url` | ❌ | `https://erseco.github.io/facturascripts-playground/` | Base URL of the FacturaScripts Playground |
 | `image-url` | ❌ | *(playground logo)* | URL of the image to display in the PR comment |
-| `comment-marker` | ❌ | `facturascripts-playground-preview` | Hidden HTML marker used to identify and deduplicate the sticky PR comment |
+| `comment-marker` | ❌ | `facturascripts-playground-preview` | Hidden HTML marker used to identify and deduplicate the sticky PR comment, and as the base for the `:start`/`:end` markers in description mode |
+| `extra-text` | ❌ | — | Optional text/HTML appended after the preview (useful for testing instructions) |
+| `restore-button-if-removed` | ❌ | `true` | In `append-to-description` mode, restore the preview block if the PR author removed it |
+| `pr-number` | ❌ | *(from event)* | Pull request number override. Required when triggered from a `workflow_run`; otherwise read from the `pull_request` event payload |
 | `extra-plugins` | ❌ | — | JSON array of additional plugins appended after `zip-url` before the final override |
 | `seed-json` | ❌ | — | JSON object with optional blueprint `seed` data |
 | `landing-page` | ❌ | — | Blueprint `landingPage` value |
@@ -87,6 +91,9 @@ A GitHub Action that automatically posts or updates a sticky pull request commen
 | Output | Description |
 |---|---|
 | `preview-url` | The full playground preview URL |
+| `mode` | Effective publishing mode used (`comment` or `append-to-description`) |
+| `comment-id` | ID of the managed preview comment in `comment` mode (empty otherwise) |
+| `rendered-description` | Managed description block rendered in `append-to-description` mode (empty otherwise) |
 
 ## Required Workflow Permissions
 

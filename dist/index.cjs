@@ -20075,6 +20075,19 @@ function getProxyFetch(destinationUrl) {
 function getApiBaseUrl() {
   return process.env["GITHUB_API_URL"] || "https://api.github.com";
 }
+function getUserAgentWithOrchestrationId(baseUserAgent) {
+  var _a;
+  const orchId = (_a = process.env["ACTIONS_ORCHESTRATION_ID"]) === null || _a === void 0 ? void 0 : _a.trim();
+  if (orchId) {
+    const sanitizedId = orchId.replace(/[^a-z0-9_.-]/gi, "_");
+    const tag = `actions_orchestration_id/${sanitizedId}`;
+    if (baseUserAgent === null || baseUserAgent === void 0 ? void 0 : baseUserAgent.includes(tag))
+      return baseUserAgent;
+    const ua = baseUserAgent ? `${baseUserAgent} ` : "";
+    return `${ua}${tag}`;
+  }
+  return baseUserAgent;
+}
 
 // node_modules/universal-user-agent/index.js
 function getUserAgent() {
@@ -23669,6 +23682,10 @@ function getOctokitOptions(token, options) {
   if (auth2) {
     opts.auth = auth2;
   }
+  const userAgent2 = getUserAgentWithOrchestrationId(opts.userAgent);
+  if (userAgent2) {
+    opts.userAgent = userAgent2;
+  }
   return opts;
 }
 
@@ -23815,9 +23832,8 @@ function buildPreviewUrl(playgroundUrl, blueprintJson) {
   const base = playgroundUrl.endsWith("/") ? playgroundUrl : playgroundUrl + "/";
   return `${base}?blueprint-data=${encoded}`;
 }
-function buildCommentBody(marker, previewUrl, imageUrl) {
-  return `<!-- ${marker} -->
-## FacturaScripts Playground Preview
+function buildPreviewBody(previewUrl, imageUrl, extraText) {
+  let body = `## FacturaScripts Playground Preview
 
 <a href="${previewUrl}">
   <img src="${imageUrl}" alt="Open this PR in FacturaScripts Playground" width="220">
@@ -23825,9 +23841,65 @@ function buildCommentBody(marker, previewUrl, imageUrl) {
 <small><a href="${previewUrl}">Try this PR in your browser</a></small>
 
 This preview was generated automatically from the PR branch ZIP.`;
+  if (typeof extraText === "string" && extraText.trim()) {
+    body += `
+
+${extraText.trim()}`;
+  }
+  return body;
+}
+function buildCommentBody(marker, previewUrl, imageUrl, extraText) {
+  return `<!-- ${marker} -->
+${buildPreviewBody(previewUrl, imageUrl, extraText)}`;
+}
+function buildDescriptionBlock(marker, previewUrl, imageUrl, extraText) {
+  return `<!-- ${marker}:start -->
+${buildPreviewBody(previewUrl, imageUrl, extraText)}
+<!-- ${marker}:end -->`;
+}
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function descriptionBlockPattern(marker) {
+  const escaped = escapeRegex(marker);
+  return new RegExp(
+    `<!-- ${escaped}:start -->([\\s\\S]*?)<!-- ${escaped}:end -->\\s*`,
+    "m"
+  );
+}
+function computeNextDescriptionBody(currentBody, marker, block, options = {}) {
+  const { restoreIfRemoved = true } = options;
+  const body = currentBody || "";
+  const pattern = descriptionBlockPattern(marker);
+  const match = body.match(pattern);
+  if (match) {
+    const existingContent = (match[1] || "").trim();
+    const looksLikeButton = existingContent.includes("<a ") && existingContent.toLowerCase().includes("playground");
+    if (existingContent && !looksLikeButton) {
+      return null;
+    }
+    return body.replace(pattern, block);
+  }
+  if (!restoreIfRemoved) {
+    return null;
+  }
+  const trimmed = body.trimEnd();
+  return trimmed ? `${trimmed}
+
+${block}` : block;
+}
+function removeDescriptionBlock(currentBody, marker) {
+  const body = currentBody || "";
+  const pattern = descriptionBlockPattern(marker);
+  if (!pattern.test(body)) {
+    return body;
+  }
+  return body.replace(pattern, "").trimEnd();
 }
 
 // index.js
+var MODE_COMMENT = "comment";
+var MODE_APPEND = "append-to-description";
 async function run() {
   try {
     const token = getInput("github-token", { required: true });
@@ -23838,6 +23910,20 @@ async function run() {
     const playgroundUrl = getInput("playground-url") || "https://erseco.github.io/facturascripts-playground/";
     const imageUrl = getInput("image-url") || "https://raw.githubusercontent.com/erseco/facturascripts-playground/refs/heads/main/ogimage.png";
     const commentMarker = getInput("comment-marker") || "facturascripts-playground-preview";
+    const extraText = (getInput("extra-text") || "").trim();
+    const prNumberInput = getInput("pr-number");
+    const rawMode = (getInput("mode") || MODE_COMMENT).trim().toLowerCase();
+    if (rawMode !== MODE_COMMENT && rawMode !== MODE_APPEND) {
+      setFailed(
+        `Invalid mode "${rawMode}". Accepted values: ${MODE_COMMENT}, ${MODE_APPEND}.`
+      );
+      return;
+    }
+    const mode = rawMode;
+    const restoreIfRemoved = parseOptionalBoolean(
+      getInput("restore-button-if-removed"),
+      "restore-button-if-removed"
+    ) !== false;
     const extraPlugins = parseJsonInput("extra-plugins", getInput("extra-plugins"), "array") || [];
     const seed = parseJsonInput("seed-json", getInput("seed-json"), "object");
     const blueprintOverride = parseJsonInput("blueprint-json", getInput("blueprint-json"), "object");
@@ -23852,14 +23938,30 @@ async function run() {
     const loginUsername = getInput("login-username") || void 0;
     const loginPassword = getInput("login-password") || void 0;
     const context3 = context2;
-    const prNumber = context3.payload.pull_request && context3.payload.pull_request.number;
-    if (!prNumber) {
+    const octokit = getOctokit(token);
+    let pullRequest = context3.payload.pull_request || null;
+    let { owner, repo } = context3.repo;
+    if (prNumberInput && prNumberInput.trim()) {
+      const prNum = Number.parseInt(prNumberInput.trim(), 10);
+      if (!Number.isInteger(prNum) || prNum <= 0) {
+        setFailed(`Invalid pr-number "${prNumberInput}".`);
+        return;
+      }
+      info(`Fetching PR #${prNum} details from GitHub API...`);
+      const { data: prData } = await octokit.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: prNum
+      });
+      pullRequest = prData;
+    }
+    if (!pullRequest || !pullRequest.number) {
       setFailed(
-        "This action must be triggered from a pull_request event. No pull request context found."
+        "This action must be triggered from a pull_request event, or pr-number must be provided as input."
       );
       return;
     }
-    const { owner, repo } = context3.repo;
+    const prNumber = pullRequest.number;
     const blueprint = buildBlueprint(zipUrl, title, author, description, {
       extraPlugins,
       seed,
@@ -23876,8 +23978,51 @@ async function run() {
     const previewUrl = buildPreviewUrl(playgroundUrl, blueprintJson);
     info(`Preview URL: ${previewUrl}`);
     setOutput("preview-url", previewUrl);
-    const commentBody = buildCommentBody(commentMarker, previewUrl, imageUrl);
-    const octokit = getOctokit(token);
+    setOutput("mode", mode);
+    if (mode === MODE_APPEND) {
+      const block = buildDescriptionBlock(
+        commentMarker,
+        previewUrl,
+        imageUrl,
+        extraText
+      );
+      setOutput("rendered-description", block);
+      setOutput("comment-id", "");
+      const currentBody2 = pullRequest.body || "";
+      const nextBody = computeNextDescriptionBody(currentBody2, commentMarker, block, {
+        restoreIfRemoved
+      });
+      if (nextBody === null) {
+        info(
+          "Skipping PR description update (user placeholder detected, or markers removed with restore-button-if-removed=false)."
+        );
+        return;
+      }
+      if (nextBody === currentBody2) {
+        info("PR description already up to date.");
+        return;
+      }
+      await octokit.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: prNumber,
+        body: nextBody
+      });
+      info("PR description updated with FacturaScripts Playground preview.");
+      return;
+    }
+    const currentBody = pullRequest.body || "";
+    const cleanedBody = removeDescriptionBlock(currentBody, commentMarker);
+    if (cleanedBody !== currentBody) {
+      await octokit.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: prNumber,
+        body: cleanedBody
+      });
+      info("Removed leftover preview block from PR description.");
+    }
+    const commentBody = buildCommentBody(commentMarker, previewUrl, imageUrl, extraText);
     let existingCommentId = null;
     for await (const response of octokit.paginate.iterator(
       octokit.rest.issues.listComments,
@@ -23899,14 +24044,16 @@ async function run() {
         body: commentBody
       });
       info(`Updated existing preview comment (id: ${existingCommentId})`);
+      setOutput("comment-id", String(existingCommentId));
     } else {
-      await octokit.rest.issues.createComment({
+      const created = await octokit.rest.issues.createComment({
         owner,
         repo,
         issue_number: prNumber,
         body: commentBody
       });
-      info("Created new preview comment");
+      info(`Created new preview comment (id: ${created.data.id})`);
+      setOutput("comment-id", String(created.data.id));
     }
   } catch (error2) {
     setFailed(`Action failed: ${error2.message}`);

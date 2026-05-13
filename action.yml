@@ -63,10 +63,30 @@ inputs:
   blueprint-json:
     description: 'Optional JSON object merged last into the generated blueprint to add or override advanced settings'
     required: false
+  mode:
+    description: 'How to publish the preview: `comment` (default) or `append-to-description`'
+    required: false
+    default: 'comment'
+  extra-text:
+    description: 'Optional text/HTML appended after the preview (e.g., testing instructions)'
+    required: false
+  restore-button-if-removed:
+    description: 'In `append-to-description` mode, whether to restore the preview block if the PR author removed it'
+    required: false
+    default: 'true'
+  pr-number:
+    description: 'Pull request number override. Required when triggered from `workflow_run`; defaults to the pull_request event payload otherwise.'
+    required: false
 
 outputs:
   preview-url:
     description: 'The full playground preview URL'
+  mode:
+    description: 'Effective publishing mode used (`comment` or `append-to-description`)'
+  comment-id:
+    description: 'ID of the managed preview comment in `comment` mode (empty otherwise)'
+  rendered-description:
+    description: 'Managed description block rendered in `append-to-description` mode (empty otherwise)'
 
 runs:
   using: 'node20'
