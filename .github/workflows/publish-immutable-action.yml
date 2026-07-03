@@ -1,8 +1,12 @@
+# Disabled: actions/publish-immutable-action currently fails on every release
+# with "DENIED - action package publishing is not enabled for this repository".
+# GitHub's own docs for that action state immutable actions publishing is not
+# yet rolled out for general use. Re-enable the `release: published` trigger
+# once GitHub ships it. Manual runs still work via workflow_dispatch.
 name: 'Publish Immutable Action Version'
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 jobs:
   publish:
