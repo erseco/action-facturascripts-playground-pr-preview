@@ -24121,7 +24121,7 @@ async function run() {
     const previewUrl = buildPreviewUrl(playgroundUrl, blueprintJson);
     if (previewUrlExceedsLimit(previewUrl)) {
       warning(
-        `Preview URL is ${previewUrl.length} chars (> ${MAX_SAFE_PREVIEW_URL}); a web server may reject it with HTTP 414 (URI Too Long). Consider trimming "extra-plugins"/"seed-json" or splitting the payload into a smaller blueprint.`
+        `Preview URL is ${previewUrl.length} chars (> ${MAX_SAFE_PREVIEW_URL}); a web server may reject it with HTTP 414 (URI Too Long). Consider trimming "extra-plugins"/"seed-json"/"blueprint-json" ("blueprint-json" is merged last and can be arbitrarily large, so it is often the biggest contributor) or splitting the payload into a smaller blueprint.`
       );
     }
     info(`Preview URL: ${previewUrl}`);
