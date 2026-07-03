@@ -11,6 +11,8 @@ import {
   descriptionBlockPattern,
   parseJsonInput,
   parseOptionalBoolean,
+  previewUrlExceedsLimit,
+  MAX_SAFE_PREVIEW_URL,
 } from '../lib.js';
 
 test('toBase64Url produces valid base64url (no +, /, or = chars)', () => {
@@ -218,6 +220,31 @@ test('buildPreviewUrl appends trailing slash to playground URL if missing', () =
   const json = '{"test":1}';
   const url = buildPreviewUrl('https://erseco.github.io/facturascripts-playground', json);
   assert.ok(url.startsWith('https://erseco.github.io/facturascripts-playground/'), 'trailing slash added');
+});
+
+test('previewUrlExceedsLimit is false for a short URL', () => {
+  const url = 'https://erseco.github.io/facturascripts-playground/?blueprint-data=abc';
+  assert.equal(previewUrlExceedsLimit(url), false);
+});
+
+test('previewUrlExceedsLimit is true for a URL longer than the limit', () => {
+  const url = 'https://example.com/?blueprint-data=' + 'a'.repeat(MAX_SAFE_PREVIEW_URL);
+  assert.ok(url.length > MAX_SAFE_PREVIEW_URL, 'test URL exceeds the limit');
+  assert.equal(previewUrlExceedsLimit(url), true);
+});
+
+test('previewUrlExceedsLimit is false when the URL length exactly equals the limit', () => {
+  const prefix = 'https://example.com/?blueprint-data=';
+  const url = prefix + 'a'.repeat(MAX_SAFE_PREVIEW_URL - prefix.length);
+  assert.equal(url.length, MAX_SAFE_PREVIEW_URL, 'test URL is exactly at the limit');
+  assert.equal(previewUrlExceedsLimit(url), false);
+});
+
+test('previewUrlExceedsLimit is true when the URL length is one char past the limit', () => {
+  const prefix = 'https://example.com/?blueprint-data=';
+  const url = prefix + 'a'.repeat(MAX_SAFE_PREVIEW_URL - prefix.length + 1);
+  assert.equal(url.length, MAX_SAFE_PREVIEW_URL + 1, 'test URL is one char past the limit');
+  assert.equal(previewUrlExceedsLimit(url), true);
 });
 
 test('buildCommentBody contains marker, URL, and image', () => {

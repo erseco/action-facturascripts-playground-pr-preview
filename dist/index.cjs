@@ -20100,6 +20100,9 @@ function setFailed(message) {
 function error(message, properties = {}) {
   issueCommand("error", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
+function warning(message, properties = {}) {
+  issueCommand("warning", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+}
 function info(message) {
   process.stdout.write(message + os4.EOL);
 }
@@ -23968,6 +23971,10 @@ function buildPreviewUrl(playgroundUrl, blueprintJson) {
   const base = playgroundUrl.endsWith("/") ? playgroundUrl : playgroundUrl + "/";
   return `${base}?blueprint-data=${encoded}`;
 }
+var MAX_SAFE_PREVIEW_URL = 8e3;
+function previewUrlExceedsLimit(url, max = MAX_SAFE_PREVIEW_URL) {
+  return typeof url === "string" && url.length > max;
+}
 function buildPreviewBody(previewUrl, imageUrl, extraText) {
   let body = `## FacturaScripts Playground Preview
 
@@ -24112,6 +24119,11 @@ async function run() {
     });
     const blueprintJson = JSON.stringify(blueprint, null, 2);
     const previewUrl = buildPreviewUrl(playgroundUrl, blueprintJson);
+    if (previewUrlExceedsLimit(previewUrl)) {
+      warning(
+        `Preview URL is ${previewUrl.length} chars (> ${MAX_SAFE_PREVIEW_URL}); a web server may reject it with HTTP 414 (URI Too Long). Consider trimming "extra-plugins"/"seed-json"/"blueprint-json" ("blueprint-json" is merged last and can be arbitrarily large, so it is often the biggest contributor) or splitting the payload into a smaller blueprint.`
+      );
+    }
     info(`Preview URL: ${previewUrl}`);
     setOutput("preview-url", previewUrl);
     setOutput("mode", mode);

@@ -198,6 +198,20 @@ jobs:
 
 4. **Sticky comment** — The action searches existing PR comments for a hidden HTML marker (`<!-- facturascripts-playground-preview -->`). If found, it updates that comment; otherwise it creates a new one. This prevents duplicate comments on repeated workflow runs (`synchronize`, `edited`, etc.).
 
+## Large Blueprints / HTTP 414
+
+The action always inlines the full blueprint as base64url in the `?blueprint-data=` query parameter of the preview URL (see [How It Works](#how-it-works) above) — there is no remote-URL escape hatch. For large blueprints, the resulting URL can exceed common web-server request-line limits (nginx defaults to 8 KB), so the preview link may return **HTTP 414 (URI Too Long)** and the Playground page never loads.
+
+The action logs a warning when the built preview URL exceeds ~8000 characters (`MAX_SAFE_PREVIEW_URL` in `lib.js`). This warning is advisory only — it does not fail the action or block the PR comment/description update.
+
+To keep the preview URL short, trim whichever of these inputs is inflating the blueprint:
+
+- **`extra-plugins`** — keep the list of additional plugin URLs/slugs short.
+- **`seed-json`** — avoid embedding large seed datasets.
+- **`blueprint-json`** — merged last into the generated blueprint and can be arbitrarily large, so it's usually the biggest contributor to an oversized URL; check it first.
+
+If trimming isn't enough, split the preview into a smaller blueprint that only demonstrates the specific PR change.
+
 ## Development
 
 ### Prerequisites
