@@ -9,6 +9,8 @@ import {
   removeDescriptionBlock,
   parseJsonInput,
   parseOptionalBoolean,
+  previewUrlExceedsLimit,
+  MAX_SAFE_PREVIEW_URL,
 } from './lib.js';
 
 const MODE_COMMENT = 'comment';
@@ -109,6 +111,14 @@ async function run() {
     });
     const blueprintJson = JSON.stringify(blueprint, null, 2);
     const previewUrl = buildPreviewUrl(playgroundUrl, blueprintJson);
+
+    if (previewUrlExceedsLimit(previewUrl)) {
+      core.warning(
+        `Preview URL is ${previewUrl.length} chars (> ${MAX_SAFE_PREVIEW_URL}); ` +
+          'a web server may reject it with HTTP 414 (URI Too Long). ' +
+          'Consider trimming "extra-plugins"/"seed-json" or splitting the payload into a smaller blueprint.'
+      );
+    }
 
     core.info(`Preview URL: ${previewUrl}`);
     core.setOutput('preview-url', previewUrl);

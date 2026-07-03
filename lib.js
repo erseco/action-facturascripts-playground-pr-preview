@@ -205,6 +205,25 @@ export function buildPreviewUrl(playgroundUrl, blueprintJson) {
   return `${base}?blueprint-data=${encoded}`;
 }
 
+/**
+ * Largest preview-URL length (in characters) considered safe. nginx caps the
+ * request line at 8 KB by default (`large_client_header_buffers`), so a longer
+ * URL risks an HTTP 414 rejection; we warn a little under that limit.
+ * @type {number}
+ */
+export const MAX_SAFE_PREVIEW_URL = 8000;
+
+/**
+ * Returns `true` when the preview URL is long enough that a web server may
+ * reject it with HTTP 414 (URI Too Long).
+ * @param {string} url
+ * @param {number} [max=MAX_SAFE_PREVIEW_URL]
+ * @returns {boolean}
+ */
+export function previewUrlExceedsLimit(url, max = MAX_SAFE_PREVIEW_URL) {
+  return typeof url === 'string' && url.length > max;
+}
+
 function buildPreviewBody(previewUrl, imageUrl, extraText) {
   let body = `## FacturaScripts Playground Preview
 
