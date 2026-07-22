@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { gunzipSync } from 'node:zlib';
 import {
   toBase64Url,
+  encodeBlueprintParam,
   buildBlueprint,
   buildPreviewUrl,
   buildCommentBody,
@@ -29,6 +31,46 @@ test('toBase64Url produces valid base64url (no +, /, or = chars)', () => {
 test('toBase64Url strips padding from base64', () => {
   // 'a' encodes to 'YQ==' in standard base64, must be 'YQ' in base64url
   assert.equal(toBase64Url('a'), 'YQ');
+});
+
+test('encodeBlueprintParam gzips compressible blueprints (magic 0x1f 0x8b)', () => {
+  const bp = {
+    meta: { title: 'Demo' },
+    seed: {
+      products: Array.from({ length: 30 }, (_, i) => ({
+        referencia: `SKU-${i}`,
+        descripcion: 'Producto de demostración con texto repetido para comprimir',
+        precio: 19.95,
+      })),
+    },
+  };
+  const plain = toBase64Url(JSON.stringify(bp));
+  const encoded = encodeBlueprintParam(bp);
+  assert.ok(encoded.length < plain.length, 'gzip should shrink payload');
+  assert.ok(!/[+/=]/.test(encoded), 'must be base64url');
+  const bytes = Buffer.from(
+    encoded.replace(/-/g, '+').replace(/_/g, '/'),
+    'base64'
+  );
+  assert.equal(bytes[0], 0x1f);
+  assert.equal(bytes[1], 0x8b);
+  const json = gunzipSync(bytes).toString('utf8');
+  assert.deepEqual(JSON.parse(json), bp);
+});
+
+test('encodeBlueprintParam accepts a JSON string', () => {
+  const json = '{"meta":{"title":"x"},"plugins":[]}';
+  const encoded = encodeBlueprintParam(json);
+  const bytes = Buffer.from(
+    encoded.replace(/-/g, '+').replace(/_/g, '/'),
+    'base64'
+  );
+  // Tiny JSON may not gzip-win; either plain or gzip is valid.
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    assert.equal(gunzipSync(bytes).toString('utf8'), json);
+  } else {
+    assert.equal(bytes.toString('utf8'), json);
+  }
 });
 
 test('buildBlueprint returns correct structure', () => {
@@ -204,16 +246,42 @@ test('parseOptionalBoolean accepts common boolean forms and rejects invalid valu
   );
 });
 
-test('buildPreviewUrl appends blueprint-data query param', () => {
-  const json = '{"meta":{},"plugins":["https://example.com/plugin.zip"]}';
-  const url = buildPreviewUrl('https://erseco.github.io/facturascripts-playground/', json);
+test('buildPreviewUrl appends blueprint query param (gzip-capable)', () => {
+  const bp = { meta: {}, plugins: ['https://example.com/plugin.zip'] };
+  const url = buildPreviewUrl('https://erseco.github.io/facturascripts-playground/', bp);
   assert.ok(url.startsWith('https://erseco.github.io/facturascripts-playground/'), 'starts with playground URL');
-  assert.ok(url.includes('?blueprint-data='), 'contains blueprint-data param');
+  assert.ok(url.includes('?blueprint='), 'contains blueprint param');
   // Must not contain raw base64 special chars
-  const encoded = url.split('?blueprint-data=')[1];
+  const encoded = url.split('?blueprint=')[1];
   assert.ok(!encoded.includes('+'), 'encoded must not contain +');
   assert.ok(!encoded.includes('/'), 'encoded must not contain /');
   assert.ok(!encoded.includes('='), 'encoded must not contain =');
+});
+
+test('buildPreviewUrl keeps large compressible seeds under the safe limit', () => {
+  const bp = {
+    meta: { title: 'AiScan-like seed' },
+    plugins: ['https://github.com/erseco/facturascripts-plugin-AiScan/archive/refs/heads/main.zip'],
+    seed: {
+      suppliers: Array.from({ length: 20 }, (_, i) => ({
+        nombre: `Proveedor ${i}`,
+        cifnif: `B38000${String(i).padStart(3, '0')}`,
+        ciudad: 'Santa Cruz de Tenerife',
+        provincia: 'Santa Cruz de Tenerife',
+        codpais: 'ESP',
+      })),
+      products: Array.from({ length: 20 }, (_, i) => ({
+        referencia: `SERV-${i}`,
+        descripcion: 'Servicio de demostración con IGIC para Canarias',
+        precio: 50 + i,
+        codimpuesto: 'IGIC7',
+      })),
+    },
+  };
+  const legacyPlain = `https://erseco.github.io/facturascripts-playground/?blueprint-data=${toBase64Url(JSON.stringify(bp, null, 2))}`;
+  const url = buildPreviewUrl('https://erseco.github.io/facturascripts-playground/', bp);
+  assert.ok(url.length < legacyPlain.length, 'gzip+compact must beat pretty plain base64');
+  assert.equal(previewUrlExceedsLimit(url), false, `url length ${url.length} should be under ${MAX_SAFE_PREVIEW_URL}`);
 });
 
 test('buildPreviewUrl appends trailing slash to playground URL if missing', () => {
@@ -223,25 +291,25 @@ test('buildPreviewUrl appends trailing slash to playground URL if missing', () =
 });
 
 test('previewUrlExceedsLimit is false for a short URL', () => {
-  const url = 'https://erseco.github.io/facturascripts-playground/?blueprint-data=abc';
+  const url = 'https://erseco.github.io/facturascripts-playground/?blueprint=abc';
   assert.equal(previewUrlExceedsLimit(url), false);
 });
 
 test('previewUrlExceedsLimit is true for a URL longer than the limit', () => {
-  const url = 'https://example.com/?blueprint-data=' + 'a'.repeat(MAX_SAFE_PREVIEW_URL);
+  const url = 'https://example.com/?blueprint=' + 'a'.repeat(MAX_SAFE_PREVIEW_URL);
   assert.ok(url.length > MAX_SAFE_PREVIEW_URL, 'test URL exceeds the limit');
   assert.equal(previewUrlExceedsLimit(url), true);
 });
 
 test('previewUrlExceedsLimit is false when the URL length exactly equals the limit', () => {
-  const prefix = 'https://example.com/?blueprint-data=';
+  const prefix = 'https://example.com/?blueprint=';
   const url = prefix + 'a'.repeat(MAX_SAFE_PREVIEW_URL - prefix.length);
   assert.equal(url.length, MAX_SAFE_PREVIEW_URL, 'test URL is exactly at the limit');
   assert.equal(previewUrlExceedsLimit(url), false);
 });
 
 test('previewUrlExceedsLimit is true when the URL length is one char past the limit', () => {
-  const prefix = 'https://example.com/?blueprint-data=';
+  const prefix = 'https://example.com/?blueprint=';
   const url = prefix + 'a'.repeat(MAX_SAFE_PREVIEW_URL - prefix.length + 1);
   assert.equal(url.length, MAX_SAFE_PREVIEW_URL + 1, 'test URL is one char past the limit');
   assert.equal(previewUrlExceedsLimit(url), true);
@@ -249,7 +317,7 @@ test('previewUrlExceedsLimit is true when the URL length is one char past the li
 
 test('buildCommentBody contains marker, URL, and image', () => {
   const marker = 'facturascripts-playground-preview';
-  const previewUrl = 'https://erseco.github.io/facturascripts-playground/?blueprint-data=abc123';
+  const previewUrl = 'https://erseco.github.io/facturascripts-playground/?blueprint=abc123';
   const imageUrl = 'https://example.com/logo.png';
   const body = buildCommentBody(marker, previewUrl, imageUrl);
   assert.ok(body.includes(`<!-- ${marker} -->`), 'contains hidden marker');
