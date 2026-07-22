@@ -23836,9 +23836,22 @@ function getOctokit(token, options, ...additionalPlugins) {
 }
 
 // lib.js
-function toBase64Url(str) {
-  const b64 = Buffer.from(str, "utf8").toString("base64");
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+var import_node_zlib = require("node:zlib");
+function toBase64Url(value) {
+  const buf = Buffer.isBuffer(value) ? value : typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function encodeBlueprintParam(blueprint) {
+  const json = typeof blueprint === "string" ? blueprint : JSON.stringify(blueprint);
+  const utf8 = Buffer.from(json, "utf8");
+  try {
+    const gzipped = (0, import_node_zlib.gzipSync)(utf8, { level: 9 });
+    if (gzipped.length < utf8.length) {
+      return toBase64Url(gzipped);
+    }
+  } catch {
+  }
+  return toBase64Url(utf8);
 }
 function isPlainObject3(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -23966,10 +23979,10 @@ function buildBlueprint(zipUrl, title, author, description, options = {}) {
   }
   return mergedBlueprint;
 }
-function buildPreviewUrl(playgroundUrl, blueprintJson) {
-  const encoded = toBase64Url(blueprintJson);
+function buildPreviewUrl(playgroundUrl, blueprint) {
+  const encoded = encodeBlueprintParam(blueprint);
   const base = playgroundUrl.endsWith("/") ? playgroundUrl : playgroundUrl + "/";
-  return `${base}?blueprint-data=${encoded}`;
+  return `${base}?blueprint=${encoded}`;
 }
 var MAX_SAFE_PREVIEW_URL = 8e3;
 function previewUrlExceedsLimit(url, max = MAX_SAFE_PREVIEW_URL) {
@@ -24117,11 +24130,10 @@ async function run() {
       loginPassword,
       blueprintOverride
     });
-    const blueprintJson = JSON.stringify(blueprint, null, 2);
-    const previewUrl = buildPreviewUrl(playgroundUrl, blueprintJson);
+    const previewUrl = buildPreviewUrl(playgroundUrl, blueprint);
     if (previewUrlExceedsLimit(previewUrl)) {
       warning(
-        `Preview URL is ${previewUrl.length} chars (> ${MAX_SAFE_PREVIEW_URL}); a web server may reject it with HTTP 414 (URI Too Long). Consider trimming "extra-plugins"/"seed-json"/"blueprint-json" ("blueprint-json" is merged last and can be arbitrarily large, so it is often the biggest contributor) or splitting the payload into a smaller blueprint.`
+        `Preview URL is ${previewUrl.length} chars (> ${MAX_SAFE_PREVIEW_URL}); a web server may reject it with HTTP 414 (URI Too Long). The blueprint is already minified + gzipped; consider trimming "extra-plugins"/"seed-json"/"blueprint-json" ("blueprint-json" is merged last and can be arbitrarily large, so it is often the biggest contributor) or splitting the payload into a smaller blueprint.`
       );
     }
     info(`Preview URL: ${previewUrl}`);

@@ -109,14 +109,16 @@ async function run() {
       loginPassword,
       blueprintOverride,
     });
-    const blueprintJson = JSON.stringify(blueprint, null, 2);
-    const previewUrl = buildPreviewUrl(playgroundUrl, blueprintJson);
+    // Compact JSON + gzip inside buildPreviewUrl (do not pretty-print: that
+    // inflates the query string and triggers HTTP 414 on large seeds).
+    const previewUrl = buildPreviewUrl(playgroundUrl, blueprint);
 
     if (previewUrlExceedsLimit(previewUrl)) {
       core.warning(
         `Preview URL is ${previewUrl.length} chars (> ${MAX_SAFE_PREVIEW_URL}); ` +
           'a web server may reject it with HTTP 414 (URI Too Long). ' +
-          'Consider trimming "extra-plugins"/"seed-json"/"blueprint-json" ' +
+          'The blueprint is already minified + gzipped; consider trimming ' +
+          '"extra-plugins"/"seed-json"/"blueprint-json" ' +
           '("blueprint-json" is merged last and can be arbitrarily large, ' +
           'so it is often the biggest contributor) or splitting the payload into a smaller blueprint.'
       );

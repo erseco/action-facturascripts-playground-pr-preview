@@ -1,12 +1,46 @@
+import { gzipSync } from 'node:zlib';
+
 /**
- * Encodes a string as base64url (RFC 4648 §5).
+ * Encodes raw bytes (or a UTF-8 string) as base64url (RFC 4648 §5).
  * Replaces `+` with `-`, `/` with `_`, and strips trailing `=`.
- * @param {string} str
+ * @param {string | Buffer | Uint8Array} value
  * @returns {string}
  */
-export function toBase64Url(str) {
-  const b64 = Buffer.from(str, 'utf8').toString('base64');
-  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+export function toBase64Url(value) {
+  const buf = Buffer.isBuffer(value)
+    ? value
+    : typeof value === 'string'
+      ? Buffer.from(value, 'utf8')
+      : Buffer.from(value);
+  return buf
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+/**
+ * Encode a blueprint for the playground query string.
+ * Uses compact JSON + gzip when that shrinks the payload (same format as
+ * FacturaScripts Playground's encodeBlueprintParam: gzip magic 0x1f 0x8b,
+ * then base64url). Falls back to plain base64url JSON when gzip does not help.
+ *
+ * @param {object | string} blueprint Object or JSON string
+ * @returns {string} base64url payload
+ */
+export function encodeBlueprintParam(blueprint) {
+  const json =
+    typeof blueprint === 'string' ? blueprint : JSON.stringify(blueprint);
+  const utf8 = Buffer.from(json, 'utf8');
+  try {
+    const gzipped = gzipSync(utf8, { level: 9 });
+    if (gzipped.length < utf8.length) {
+      return toBase64Url(gzipped);
+    }
+  } catch {
+    // Fall through to plain base64url.
+  }
+  return toBase64Url(utf8);
 }
 
 function isPlainObject(value) {
@@ -193,16 +227,21 @@ export function buildBlueprint(
 
 /**
  * Constructs the full playground preview URL.
+ * Accepts a blueprint object or a JSON string. Prefer passing the object so
+ * the payload is minified + gzip-compressed before base64url encoding.
+ * Uses `?blueprint=` (playground primary param; `blueprint-data` still works
+ * as a legacy alias on the playground side).
+ *
  * @param {string} playgroundUrl
- * @param {string} blueprintJson
+ * @param {object | string} blueprint
  * @returns {string}
  */
-export function buildPreviewUrl(playgroundUrl, blueprintJson) {
-  const encoded = toBase64Url(blueprintJson);
+export function buildPreviewUrl(playgroundUrl, blueprint) {
+  const encoded = encodeBlueprintParam(blueprint);
   const base = playgroundUrl.endsWith('/')
     ? playgroundUrl
     : playgroundUrl + '/';
-  return `${base}?blueprint-data=${encoded}`;
+  return `${base}?blueprint=${encoded}`;
 }
 
 /**

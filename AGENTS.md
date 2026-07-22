@@ -24,7 +24,7 @@ The action does **not** build, test, or deploy anything. It only:
 
 1. Reads action inputs (chiefly `zip-url`) and PR metadata.
 2. Synthesizes a FacturaScripts Playground blueprint JSON.
-3. base64url-encodes the blueprint and builds a preview URL.
+3. Minifies + gzip-compresses + base64url-encodes the blueprint and builds a preview URL.
 4. Posts/updates the link on the PR (sticky comment or managed description block).
 
 The plugin ZIP is expected to already exist at a public URL (typically a GitHub
@@ -116,11 +116,12 @@ The code is split into two files with a clean separation:
 
 | Function | Line | Purpose |
 |---|---|---|
-| `toBase64Url(str)` | 7 | Encodes a string as base64url (RFC 4648 §5): `+`→`-`, `/`→`_`, strips trailing `=` |
+| `toBase64Url(value)` | 7 | Encodes a string/Buffer as base64url (RFC 4648 §5): `+`→`-`, `/`→`_`, strips trailing `=` |
+| `encodeBlueprintParam(blueprint)` | — | Compact JSON + gzip (when smaller) + base64url; matches playground decode |
 | `parseJsonInput(name, value, expectedType)` | 23 | Parses an optional JSON action input and validates it is an array/object |
 | `parseOptionalBoolean(value, name)` | 52 | Parses boolean-ish inputs (`true`/`false`, `on`/`off`, `1`/`0`, `yes`/`no`) |
 | `buildBlueprint(zipUrl, title, author, description, options)` | 116 | Builds the FacturaScripts blueprint object from inputs; deduplicates plugins and deep-merges `blueprint-json` last |
-| `buildPreviewUrl(playgroundUrl, blueprintJson)` | 200 | base64url-encodes the blueprint and appends it as `?blueprint-data=...` |
+| `buildPreviewUrl(playgroundUrl, blueprint)` | 200 | gzip+base64url-encodes the blueprint and appends it as `?blueprint=...` |
 | `previewUrlExceedsLimit(url, max)` | 223 | Returns `true` when the preview URL length exceeds `MAX_SAFE_PREVIEW_URL` |
 | `buildCommentBody(marker, previewUrl, imageUrl, extraText)` | 250 | Builds the sticky comment body, prefixed with the hidden `<!-- marker -->` |
 | `buildDescriptionBlock(marker, previewUrl, imageUrl, extraText)` | 264 | Builds the managed block wrapped in `<!-- marker:start -->` / `<!-- marker:end -->` |
@@ -171,19 +172,20 @@ Arrays in the override replace (do not concatenate) the base value, and the resu
 FacturaScripts Playground receives the blueprint via a single query parameter:
 
 ```
-https://erseco.github.io/facturascripts-playground/?blueprint-data={base64url-encoded-json}
+https://erseco.github.io/facturascripts-playground/?blueprint={gzip+base64url-payload}
 ```
 
-The blueprint JSON is base64url-encoded (RFC 4648 §5: `+`→`-`, `/`→`_`, padding
-stripped) so it is URL-safe without percent-encoding.
+The blueprint is minified, gzip-compressed when beneficial (gzip magic `1f 8b`, same
+as the playground shell), then base64url-encoded (RFC 4648 §5: `+`→`-`, `/`→`_`,
+padding stripped) so it is URL-safe without percent-encoding.
 
 **URL-length warning:** a large blueprint (many `extra-plugins`, big `seed-json`, a
-large `blueprint-json` override) can make the preview URL long enough that a web server
-rejects it with **HTTP 414 (URI Too Long)**. After building the URL, `index.js` calls
-`previewUrlExceedsLimit(previewUrl)`; if the URL exceeds `MAX_SAFE_PREVIEW_URL` (8000
-chars) it emits a `core.warning(...)` suggesting the user trim `extra-plugins`/
-`seed-json` or split the payload. This is **advisory only** -- the action still
-publishes the link and does not fail.
+large `blueprint-json` override) can still make the preview URL long enough that a web
+server rejects it with **HTTP 414 (URI Too Long)** even after gzip. After building the
+URL, `index.js` calls `previewUrlExceedsLimit(previewUrl)`; if the URL exceeds
+`MAX_SAFE_PREVIEW_URL` (8000 chars) it emits a `core.warning(...)` suggesting the user
+trim `extra-plugins`/`seed-json` or split the payload. This is **advisory only** -- the
+action still publishes the link and does not fail.
 
 ### Publish Modes
 
