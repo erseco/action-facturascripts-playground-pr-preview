@@ -89,5 +89,5 @@ outputs:
     description: 'Managed description block rendered in `append-to-description` mode (empty otherwise)'
 
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'dist/index.cjs'

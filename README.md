@@ -216,7 +216,7 @@ If trimming is not enough, split the preview into a smaller blueprint that only 
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 24+
 - npm
 
 ### Install dependencies
