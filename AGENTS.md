@@ -61,7 +61,7 @@ even though the source is authored as ES modules.
 
 ```bash
 npm install
-npm run build    # runs: esbuild index.js --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.cjs
+npm run build    # runs: esbuild index.js --bundle --platform=node --target=node24 --format=cjs --outfile=dist/index.cjs
 ```
 
 esbuild bundles `index.js` + its `node_modules` dependencies into a single
